@@ -1,0 +1,183 @@
+VAR B_FEC_PROGRESO VARCHAR2
+EXEC :B_FEC_PROGRESO := '10/01/23';
+
+VAR B_FEC_VIGENCIA VARCHAR2
+EXEC :B_FEC_VIGENCIA := '20/01/23';
+
+DECLARE
+
+V_NUM_MIN               DATO_POSTULACION.NUMERO_POSTULACION%TYPE;
+V_NUM_MAX               DATO_POSTULACION.NUMERO_POSTULACION%TYPE;
+V_NUMERO_POSTULACION    NUMBER;
+V_NOMBRE_COMPLETO       VARCHAR2(60); 
+V_ANTIGUEDAD            NUMBER;
+V_PUNTAJE_ANTIGUEDAD    RESULTADO_CTA.PUNTO_ANTIGUEDAD%TYPE;
+V_SUELDO_LIQ            NUMBER;
+V_PUNTAJE_SUELDO        RESULTADO_CTA.PUNTO_SUELDO%TYPE;
+V_ID_PROFESION          DATO_POSTULACION.ID_PROFESION%TYPE;
+V_PUNTAJE_PROFESION     RESULTADO_CTA.PUNTO_PROFESION%TYPE;
+V_ID_ESTADO_CIVIL       DATO_POSTULACION.ID_ESTADO_CIVIL%TYPE;
+V_PUNTAJE_CIVIL         RESULTADO_CTA.PUNTO_CIVIL%TYPE;
+V_TOTAL_PUNTO           RESULTADO_CTA.TOTAL_PUNTO%TYPE;
+V_COD_PRODUCTO          DATO_POSTULACION.COD_PRODUCTO%TYPE;
+V_DESC_PROD_POSTULA     RESULTADO_CTA.DESC_PROD_POSTULA%TYPE;
+V_PUNTO_MINIMO          PRODUCTO.PUNTO_MINIMO%TYPE;
+V_MONTO_SOLICITADO      DATO_POSTULACION.MONTO_SOLICITADO_CTACOR%TYPE;
+V_MONTO_APERTURA        RESULTADO_CTA.MONTO_CUENTA_APERTURA%TYPE;
+V_MENSAJE               RESULTADO_CTA.MENSAJE_SISTEMA%TYPE;
+
+BEGIN 
+    EXECUTE IMMEDIATE 'TRUNCATE TABLE RESULTADO_CTA';
+    
+    SELECT MIN(NUMERO_POSTULACION),MAX(NUMERO_POSTULACION)
+        INTO V_NUM_MIN,V_NUM_MAX
+    FROM DATO_POSTULACION;
+    
+    LOOP      
+                       
+            SELECT NUMERO_POSTULACION, NOMBRE ||' '|| PATERNO ||' '|| MATERNO
+            INTO V_NUMERO_POSTULACION, V_NOMBRE_COMPLETO
+            FROM DATO_POSTULACION
+            WHERE NUMERO_POSTULACION = V_NUM_MIN;
+            
+            -- Se calcula antiguedad laboral
+            SELECT EXTRACT(YEAR FROM sysdate) - EXTRACT(YEAR FROM FECHA_INICIO_TRABAJO)
+            INTO V_ANTIGUEDAD
+            FROM DATO_POSTULACION
+            WHERE NUMERO_POSTULACION = V_NUM_MIN;
+            
+            -- Se asigna puntos antiguedad
+            IF V_ANTIGUEDAD > 0 THEN
+            SELECT PUNTO
+                INTO V_PUNTAJE_ANTIGUEDAD
+            FROM RANGO_ANTIGUEDAD
+            WHERE V_ANTIGUEDAD BETWEEN RANGO_ANT_MIN AND RANGO_ANT_MAX;     
+            ELSE 
+                V_PUNTAJE_ANTIGUEDAD:=0;
+            END IF;
+
+            -- Determinamos los descuentos de afp y salud para sueldo liquido      
+            SELECT SUELDO_BRUTO - ROUND(SUELDO_BRUTO*(7/100)) - ROUND(SUELDO_BRUTO*(10/100))
+                INTO V_SUELDO_LIQ 
+            FROM DATO_POSTULACION
+            WHERE NUMERO_POSTULACION = V_NUM_MIN;
+
+             -- Se asigna puntos sueldo
+            IF V_SUELDO_LIQ > 300000 THEN
+            SELECT PUNTO
+                INTO V_PUNTAJE_SUELDO
+            FROM RANGO_SUELDO_LIQ
+            WHERE V_SUELDO_LIQ BETWEEN RANGO_SUELDO_MIN AND RANGO_SUELDO_MAX; 
+            ELSE
+                V_PUNTAJE_SUELDO:=0;
+            END IF;   
+            
+            -- Extraer id profesion
+            SELECT ID_PROFESION
+                INTO V_ID_PROFESION 
+            FROM DATO_POSTULACION
+            WHERE NUMERO_POSTULACION = V_NUM_MIN;
+            
+            -- Se asigna puntos profesion
+            SELECT PUNTO
+                INTO V_PUNTAJE_PROFESION
+            FROM PROFESION
+            WHERE ID_PROFESION = V_ID_PROFESION;  
+            
+            -- Extraer id estado civil
+            SELECT ID_ESTADO_CIVIL
+                INTO V_ID_ESTADO_CIVIL
+            FROM DATO_POSTULACION
+            WHERE NUMERO_POSTULACION = V_NUM_MIN;
+            
+            -- Se asigna puntos civil
+            SELECT PUNTO
+                INTO V_PUNTAJE_CIVIL
+            FROM ESTADO_CIVIL
+            WHERE ID_ESTADO_CIVIL = V_ID_ESTADO_CIVIL;  
+            
+            -- Se calcula total de puntos
+            V_TOTAL_PUNTO := (V_PUNTAJE_ANTIGUEDAD + V_PUNTAJE_SUELDO + V_PUNTAJE_PROFESION + V_PUNTAJE_CIVIL);
+            
+            -- Extraer cod producto
+            SELECT COD_PRODUCTO
+                INTO V_COD_PRODUCTO 
+            FROM DATO_POSTULACION
+            WHERE NUMERO_POSTULACION = V_NUM_MIN;
+            
+            -- Se asigna descripcion de producto
+            SELECT DESCRIPCION
+                INTO V_DESC_PROD_POSTULA
+            FROM PRODUCTO
+            WHERE COD_PRODUCTO = V_COD_PRODUCTO;
+            
+            -- Obtener puntaje minimo producto solicitado
+            SELECT PUNTO_MINIMO
+                INTO V_PUNTO_MINIMO 
+            FROM PRODUCTO
+            WHERE COD_PRODUCTO = V_COD_PRODUCTO;
+            
+            -- Obtener monto solicitado
+            SELECT MONTO_SOLICITADO_CTACOR
+                INTO V_MONTO_SOLICITADO
+            FROM DATO_POSTULACION
+            WHERE NUMERO_POSTULACION = V_NUM_MIN;
+            
+            -- Calculamos y asignamos el monto de apertura
+            IF (V_PUNTAJE_ANTIGUEDAD = 30000) OR (V_PUNTAJE_SUELDO = 0) OR (V_PUNTAJE_PROFESION = 0) OR (V_PUNTAJE_CIVIL = 0) THEN
+                V_MONTO_APERTURA:=0;
+                SELECT MENSAJE_SISTEMA
+                    INTO V_MENSAJE
+                FROM MENSAJE_SISTEMA
+                WHERE ID_MEN_SISTEMA = 11111;
+            ELSIF V_TOTAL_PUNTO = V_PUNTO_MINIMO THEN
+                V_MONTO_APERTURA:=V_MONTO_SOLICITADO;
+                SELECT MENSAJE_SISTEMA
+                    INTO V_MENSAJE
+                FROM MENSAJE_SISTEMA
+                WHERE ID_MEN_SISTEMA = 11011;
+            ELSIF V_TOTAL_PUNTO > V_PUNTO_MINIMO THEN
+                V_MONTO_APERTURA:=ROUND(V_MONTO_SOLICITADO*1.5);
+                SELECT MENSAJE_SISTEMA
+                    INTO V_MENSAJE
+                FROM MENSAJE_SISTEMA
+                WHERE ID_MEN_SISTEMA = 11011;
+            ELSIF V_TOTAL_PUNTO < V_PUNTO_MINIMO THEN
+                V_MONTO_APERTURA:=0;
+                SELECT MENSAJE_SISTEMA
+                    INTO V_MENSAJE
+                FROM MENSAJE_SISTEMA
+                WHERE ID_MEN_SISTEMA = 11111;
+            ELSE
+               V_MONTO_APERTURA:=0;
+                SELECT MENSAJE_SISTEMA
+                    INTO V_MENSAJE
+                FROM MENSAJE_SISTEMA
+                WHERE ID_MEN_SISTEMA = 11111;
+            END IF;
+            
+            INSERT INTO RESULTADO_CTA
+            VALUES(V_NUMERO_POSTULACION,
+                   :B_FEC_PROGRESO,
+                   :B_FEC_VIGENCIA,
+                   V_NOMBRE_COMPLETO,
+                   V_PUNTAJE_ANTIGUEDAD,
+                   V_PUNTAJE_SUELDO,
+                   V_PUNTAJE_PROFESION,
+                   V_PUNTAJE_CIVIL,
+                   V_TOTAL_PUNTO,
+                   V_DESC_PROD_POSTULA,
+                   V_MONTO_APERTURA,
+                   V_MENSAJE);          
+    
+    EXIT WHEN V_NUM_MIN >= V_NUM_MAX;                                     
+         V_NUM_MIN:= V_NUM_MIN+1;                                         
+    END LOOP;
+    
+END;
+
+-- Consultar tabla
+SELECT * FROM RESULTADO_CTA;
+
+-- Eliminar datos de la tabla
+DELETE FROM RESULTADO_CTA;
